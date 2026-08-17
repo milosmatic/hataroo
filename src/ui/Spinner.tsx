@@ -1,7 +1,7 @@
-import { Text } from "ink"
-import { useEffect, useState } from "react"
+import { Text } from 'ink'
+import { useEffect, useState } from 'react'
 
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const INTERVAL_MS = 80
 
 export function Spinner() {

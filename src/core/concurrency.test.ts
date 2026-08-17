@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest"
-import { mapWithConcurrency } from "./concurrency.js"
+import { describe, expect, it } from 'vitest'
+import { mapWithConcurrency } from './concurrency.js'
 
-describe("mapWithConcurrency", () => {
-  it("resolves every item, preserving input order regardless of completion order", async () => {
+describe('mapWithConcurrency', () => {
+  it('resolves every item, preserving input order regardless of completion order', async () => {
     const items = [30, 10, 20]
 
     const results = await mapWithConcurrency(items, 8, async (ms) => {
@@ -13,7 +13,7 @@ describe("mapWithConcurrency", () => {
     expect(results).toEqual([30, 10, 20])
   })
 
-  it("never runs more than the given concurrency limit at once", async () => {
+  it('never runs more than the given concurrency limit at once', async () => {
     const items = Array.from({ length: 10 }, (_, i) => i)
     let inFlight = 0
     let maxInFlight = 0
@@ -29,24 +29,24 @@ describe("mapWithConcurrency", () => {
     expect(maxInFlight).toBeLessThanOrEqual(3)
   })
 
-  it("handles an empty list", async () => {
+  it('handles an empty list', async () => {
     const results = await mapWithConcurrency([], 8, async (i: number) => i)
 
     expect(results).toEqual([])
   })
 
-  it("propagates the rejection of the first item that fails", async () => {
+  it('propagates the rejection of the first item that fails', async () => {
     const items = [1, 2, 3]
 
     await expect(
       mapWithConcurrency(items, 8, async (i) => {
-        if (i === 2) throw new Error("boom")
+        if (i === 2) throw new Error('boom')
         return i
       }),
-    ).rejects.toThrow("boom")
+    ).rejects.toThrow('boom')
   })
 
-  it("calls onEach as each item resolves, before the whole batch finishes", async () => {
+  it('calls onEach as each item resolves, before the whole batch finishes', async () => {
     const items = [1, 2, 3]
     const seen: number[] = []
 

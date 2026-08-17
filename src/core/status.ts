@@ -1,12 +1,12 @@
-import { execa } from "execa"
-import { mapWithConcurrency } from "./concurrency.js"
-import { type GitStatus, parsePorcelainStatus } from "./git-status.js"
+import { execa } from 'execa'
+import { mapWithConcurrency } from './concurrency.js'
+import { type GitStatus, parsePorcelainStatus } from './git-status.js'
 
 const CONCURRENCY = 8
 
 /** Resolves the {@link GitStatus} of the repo at `path` by shelling out to git. */
 export async function resolveStatus(path: string): Promise<GitStatus> {
-  const { stdout } = await execa("git", ["status", "--porcelain=v2", "--branch"], {
+  const { stdout } = await execa('git', ['status', '--porcelain=v2', '--branch'], {
     cwd: path,
   })
   return parsePorcelainStatus(stdout)

@@ -1,10 +1,10 @@
-import { defineConfig } from "tsup"
+import { defineConfig } from 'tsup'
 
 export default defineConfig({
-  entry: { "hataroo-cli": "src/cli.tsx" },
-  format: "esm",
-  platform: "node",
-  target: "node22",
+  entry: { 'hataroo-cli': 'src/cli.tsx' },
+  format: 'esm',
+  platform: 'node',
+  target: 'node22',
   bundle: true,
   splitting: false,
   clean: true,
@@ -14,7 +14,7 @@ export default defineConfig({
   noExternal: [/.*/],
   esbuildOptions(options) {
     options.alias = {
-      "react-devtools-core": "./src/shims/react-devtools-core.ts",
+      'react-devtools-core': './src/shims/react-devtools-core.ts',
     }
   },
 })

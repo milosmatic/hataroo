@@ -1,9 +1,9 @@
-import { Box, Text, useApp, useInput, useStdin } from "ink"
-import { useEffect, useState } from "react"
-import { scan, type Repo } from "../core/scan.js"
-import type { GitStatus } from "../core/git-status.js"
-import { resolveStatuses } from "../core/status.js"
-import { Spinner } from "./Spinner.js"
+import { Box, Text, useApp, useInput, useStdin } from 'ink'
+import { useEffect, useState } from 'react'
+import { scan, type Repo } from '../core/scan.js'
+import type { GitStatus } from '../core/git-status.js'
+import { resolveStatuses } from '../core/status.js'
+import { Spinner } from './Spinner.js'
 
 interface Props {
   root: string
@@ -41,7 +41,7 @@ export function App({ root }: Props) {
   const { isRawModeSupported } = useStdin()
   useInput(
     (input) => {
-      if (input === "q") exit()
+      if (input === 'q') exit()
     },
     { isActive: isRawModeSupported === true },
   )
@@ -82,7 +82,7 @@ function RepoRow({ repo, status }: { repo: Repo; status: GitStatus | undefined }
 
   return (
     <Text>
-      {repo.name} · {status.branch} · ↑{status.ahead}↓{status.behind}{" "}
+      {repo.name} · {status.branch} · ↑{status.ahead}↓{status.behind}{' '}
       {status.dirty ? <Text color="yellow">● dirty</Text> : <Text dimColor>clean</Text>}
     </Text>
   )
