@@ -66,11 +66,17 @@ export function App({ root, depth, ignore }: Props) {
   }
 
   if (repos.length === 0) {
+    const depthUsed = clampDepth(depth)
     return (
       <Box flexDirection="column">
         <Text>No repos found under {root}</Text>
-        <Text dimColor>depth used: {clampDepth(depth)}</Text>
-        <Text dimColor>hint: try --depth 2</Text>
+        <Text dimColor>depth used: {depthUsed}</Text>
+        {depthUsed < 2 && <Text dimColor>hint: try --depth 2</Text>}
+        {ignore !== undefined && ignore.length > 0 && (
+          <Text dimColor>
+            hint: {ignore.length} --ignore pattern(s) active, one may be excluding everything
+          </Text>
+        )}
         <Box marginTop={1}>
           <Text dimColor>r rescan · q quit</Text>
         </Box>

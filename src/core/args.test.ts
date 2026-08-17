@@ -29,4 +29,24 @@ describe('parseArgs', () => {
   it('ignores a non-numeric --depth value', () => {
     expect(parseArgs(['--depth', 'nope'])).toMatchObject({ depth: undefined })
   })
+
+  it('rejects a partially-numeric --depth value instead of truncating it', () => {
+    expect(parseArgs(['--depth', '2x'])).toMatchObject({ depth: undefined })
+  })
+
+  it("does not consume a following flag as --depth's value when --depth has none", () => {
+    expect(parseArgs(['--depth', '--ignore', 'vendor'])).toEqual({
+      dir: undefined,
+      depth: undefined,
+      ignore: ['vendor'],
+    })
+  })
+
+  it("does not consume a following flag as --ignore's value when --ignore has none", () => {
+    expect(parseArgs(['--ignore', '--depth', '2'])).toEqual({
+      dir: undefined,
+      depth: 2,
+      ignore: [],
+    })
+  })
 })
