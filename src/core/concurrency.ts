@@ -13,6 +13,10 @@ export async function mapWithConcurrency<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   options: MapWithConcurrencyOptions<T, R> = {},
 ): Promise<R[]> {
+  if (limit <= 0) {
+    throw new RangeError(`mapWithConcurrency: limit must be positive, got ${limit}`)
+  }
+
   const results: R[] = Array.from({ length: items.length })
   let next = 0
 

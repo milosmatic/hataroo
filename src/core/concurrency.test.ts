@@ -56,4 +56,9 @@ describe('mapWithConcurrency', () => {
 
     expect(seen.toSorted()).toEqual([1, 2, 3])
   })
+
+  it('rejects a non-positive limit instead of silently returning uninitialized results', async () => {
+    await expect(mapWithConcurrency([1, 2, 3], 0, async (i) => i)).rejects.toThrow(/limit/)
+    await expect(mapWithConcurrency([1, 2, 3], -1, async (i) => i)).rejects.toThrow(/limit/)
+  })
 })
