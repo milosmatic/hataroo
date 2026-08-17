@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { scan } from './scan.js'
+import { clampDepth, scan } from './scan.js'
 
 let roots: string[] = []
 
@@ -19,6 +19,24 @@ async function makeRepo(root: string, ...segments: string[]): Promise<void> {
 afterEach(async () => {
   await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })))
   roots = []
+})
+
+describe('clampDepth', () => {
+  it('defaults to 1 when depth is unset', () => {
+    expect(clampDepth(undefined)).toBe(1)
+  })
+
+  it('caps depth above 3 down to 3', () => {
+    expect(clampDepth(99)).toBe(3)
+  })
+
+  it('raises depth below 1 up to 1', () => {
+    expect(clampDepth(0)).toBe(1)
+  })
+
+  it('passes through an in-range depth unchanged', () => {
+    expect(clampDepth(2)).toBe(2)
+  })
 })
 
 describe('scan', () => {
@@ -93,5 +111,67 @@ describe('scan', () => {
     const repos = await scan(root)
 
     expect(repos.map((r) => r.name).toSorted()).toEqual(['alpha', 'beta'])
+  })
+
+  it('excludes a directory matching an exact ignore glob', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'alpha')
+    await makeRepo(root, 'beta')
+
+    const repos = await scan(root, { ignore: ['beta'] })
+
+    expect(repos.map((r) => r.name)).toEqual(['alpha'])
+  })
+
+  it('excludes directories matching a wildcard ignore glob', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'client-a')
+    await makeRepo(root, 'client-b')
+    await makeRepo(root, 'internal')
+
+    const repos = await scan(root, { ignore: ['client-*'] })
+
+    expect(repos.map((r) => r.name)).toEqual(['internal'])
+  })
+
+  it('matches ignore globs against paths relative to the scan root, including nested repos', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'group', 'nested')
+    await makeRepo(root, 'group', 'kept')
+
+    const repos = await scan(root, { depth: 2, ignore: ['group/nested'] })
+
+    expect(repos.map((r) => r.name)).toEqual(['group/kept'])
+  })
+
+  it('supports ** in an ignore glob to match across path segments', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'a', 'vendor')
+    await makeRepo(root, 'b', 'vendor')
+    await makeRepo(root, 'a', 'kept')
+
+    const repos = await scan(root, { depth: 2, ignore: ['**/vendor'] })
+
+    expect(repos.map((r) => r.name).toSorted()).toEqual(['a/kept'])
+  })
+
+  it('applies multiple repeated ignore globs', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'alpha')
+    await makeRepo(root, 'beta')
+    await makeRepo(root, 'gamma')
+
+    const repos = await scan(root, { ignore: ['alpha', 'beta'] })
+
+    expect(repos.map((r) => r.name)).toEqual(['gamma'])
+  })
+
+  it('excludes a matched non-repo directory so its nested repos are never reached', async () => {
+    const root = await makeRoot()
+    await makeRepo(root, 'group', 'inner')
+
+    const repos = await scan(root, { depth: 2, ignore: ['group'] })
+
+    expect(repos).toEqual([])
   })
 })

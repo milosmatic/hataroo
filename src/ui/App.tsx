@@ -1,23 +1,28 @@
 import { Box, Text, useApp, useInput, useStdin } from 'ink'
 import { useEffect, useState } from 'react'
-import { scan, type Repo } from '@/core/scan.js'
+import { clampDepth, scan, type Repo } from '@/core/scan.js'
 import type { GitStatus } from '@/core/git-status.js'
 import { resolveStatuses } from '@/core/status.js'
 import { Spinner } from './Spinner.js'
 
 interface Props {
   root: string
+  depth?: number
+  ignore?: string[]
 }
 
-export function App({ root }: Props) {
+export function App({ root, depth, ignore }: Props) {
   const { exit } = useApp()
   const [repos, setRepos] = useState<Repo[] | null>(null)
   const [statuses, setStatuses] = useState<Map<string, GitStatus>>(new Map())
   const [error, setError] = useState<string | null>(null)
+  const [scanCount, setScanCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    scan(root)
+    setRepos(null)
+    setError(null)
+    scan(root, { depth, ignore })
       .then((found) => {
         if (cancelled) return
         setRepos(found)
@@ -36,12 +41,13 @@ export function App({ root }: Props) {
     return () => {
       cancelled = true
     }
-  }, [root])
+  }, [root, depth, ignore, scanCount])
 
   const { isRawModeSupported } = useStdin()
   useInput(
     (input) => {
       if (input === 'q') exit()
+      if (input === 'r') setScanCount((count) => count + 1)
     },
     { isActive: isRawModeSupported === true },
   )
@@ -50,7 +56,7 @@ export function App({ root }: Props) {
     return (
       <Box flexDirection="column">
         <Text color="red">scan failed: {error}</Text>
-        <Text dimColor>q quit</Text>
+        <Text dimColor>r rescan · q quit</Text>
       </Box>
     )
   }
@@ -59,13 +65,32 @@ export function App({ root }: Props) {
     return <Text dimColor>scanning {root}…</Text>
   }
 
+  if (repos.length === 0) {
+    const depthUsed = clampDepth(depth)
+    return (
+      <Box flexDirection="column">
+        <Text>No repos found under {root}</Text>
+        <Text dimColor>depth used: {depthUsed}</Text>
+        {depthUsed < 2 && <Text dimColor>hint: try --depth 2</Text>}
+        {ignore !== undefined && ignore.length > 0 && (
+          <Text dimColor>
+            hint: {ignore.length} --ignore pattern(s) active, one may be excluding everything
+          </Text>
+        )}
+        <Box marginTop={1}>
+          <Text dimColor>r rescan · q quit</Text>
+        </Box>
+      </Box>
+    )
+  }
+
   return (
     <Box flexDirection="column">
       {repos.map((repo) => (
         <RepoRow key={repo.path} repo={repo} status={statuses.get(repo.path)} />
       ))}
       <Box marginTop={1}>
-        <Text dimColor>q quit</Text>
+        <Text dimColor>r rescan · q quit</Text>
       </Box>
     </Box>
   )
