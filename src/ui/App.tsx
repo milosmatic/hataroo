@@ -1,6 +1,9 @@
-import { Box, Text, useApp, useInput, useStdin } from "ink"
-import { useEffect, useState } from "react"
-import { scan, type Repo } from "../core/scan.js"
+import { Box, Text, useApp, useInput, useStdin } from 'ink'
+import { useEffect, useState } from 'react'
+import { scan, type Repo } from '@/core/scan.js'
+import type { GitStatus } from '@/core/git-status.js'
+import { resolveStatuses } from '@/core/status.js'
+import { Spinner } from './Spinner.js'
 
 interface Props {
   root: string
@@ -9,13 +12,23 @@ interface Props {
 export function App({ root }: Props) {
   const { exit } = useApp()
   const [repos, setRepos] = useState<Repo[] | null>(null)
+  const [statuses, setStatuses] = useState<Map<string, GitStatus>>(new Map())
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     scan(root)
       .then((found) => {
-        if (!cancelled) setRepos(found)
+        if (cancelled) return
+        setRepos(found)
+        setStatuses(new Map())
+        return resolveStatuses(
+          found.map((repo) => repo.path),
+          (path, status) => {
+            if (cancelled) return
+            setStatuses((prev) => new Map(prev).set(path, status))
+          },
+        )
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
@@ -28,7 +41,7 @@ export function App({ root }: Props) {
   const { isRawModeSupported } = useStdin()
   useInput(
     (input) => {
-      if (input === "q") exit()
+      if (input === 'q') exit()
     },
     { isActive: isRawModeSupported === true },
   )
@@ -49,11 +62,28 @@ export function App({ root }: Props) {
   return (
     <Box flexDirection="column">
       {repos.map((repo) => (
-        <Text key={repo.path}>{repo.name}</Text>
+        <RepoRow key={repo.path} repo={repo} status={statuses.get(repo.path)} />
       ))}
       <Box marginTop={1}>
         <Text dimColor>q quit</Text>
       </Box>
     </Box>
+  )
+}
+
+function RepoRow({ repo, status }: { repo: Repo; status: GitStatus | undefined }) {
+  if (status === undefined) {
+    return (
+      <Text>
+        <Spinner /> {repo.name}
+      </Text>
+    )
+  }
+
+  return (
+    <Text>
+      {repo.name} · {status.branch} · ↑{status.ahead}↓{status.behind}{' '}
+      {status.dirty ? <Text color="yellow">● dirty</Text> : <Text dimColor>clean</Text>}
+    </Text>
   )
 }
