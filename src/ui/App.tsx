@@ -1,8 +1,8 @@
 import { Box, Text, useApp, useInput, useStdin } from 'ink'
 import { useEffect, useState } from 'react'
-import { scan, type Repo } from '../core/scan.js'
-import type { GitStatus } from '../core/git-status.js'
-import { resolveStatuses } from '../core/status.js'
+import { scan, type Repo } from '@/core/scan.js'
+import type { GitStatus } from '@/core/git-status.js'
+import { resolveStatuses } from '@/core/status.js'
 import { Spinner } from './Spinner.js'
 
 interface Props {
