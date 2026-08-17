@@ -1,0 +1,9 @@
+.osgrep
+node_modules/
+dist/
+
+# agent-local docs, not tracked
+CLAUDE.md
+CONTEXT.md
+docs/
+.scratch/
