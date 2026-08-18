@@ -59,5 +59,9 @@ export function reduce(state: CoreState, action: CoreAction): CoreState {
       if (state.selected.size === 0) return { ...state, statusMessage: EMPTY_SELECTION_MESSAGE }
       return { ...state, statusMessage: null }
     }
+    default: {
+      action satisfies never
+      return state
+    }
   }
 }

@@ -129,4 +129,9 @@ describe('reduce', () => {
       expect(state.statusMessage).toBeNull()
     })
   })
+
+  it('returns the state unchanged for an unknown action', () => {
+    const state = loaded(['/a'])
+    expect(reduce(state, { type: 'bogus' } as unknown as Parameters<typeof reduce>[1])).toBe(state)
+  })
 })
