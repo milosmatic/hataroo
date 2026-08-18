@@ -1,6 +1,6 @@
 {
   "name": "hataroo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A terminal UI for managing a folder of git repositories at once: bulk status, ff-only pull, and dependency install.",
   "keywords": [
     "cli",
