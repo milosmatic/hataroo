@@ -134,4 +134,138 @@ describe('reduce', () => {
     const state = loaded(['/a'])
     expect(reduce(state, { type: 'bogus' } as unknown as Parameters<typeof reduce>[1])).toBe(state)
   })
+
+  describe('bulk operation lifecycle', () => {
+    function selected(paths: string[], picks: string[]): CoreState {
+      let state = loaded(paths)
+      for (const pick of picks) {
+        state = reduce({ ...state, cursor: paths.indexOf(pick) }, { type: 'toggle-select' })
+      }
+      return state
+    }
+
+    it('starts a run over the selection, queued in row order, all pending', () => {
+      const state = reduce(selected(['/a', '/b', '/c'], ['/c', '/a']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      expect(state.run?.operation).toBe('pull')
+      expect(state.run?.paths).toEqual(['/a', '/c'])
+      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'pending', error: null })
+      expect(state.run?.outcomes.get('/c')).toEqual({ status: 'pending', error: null })
+      expect(state.run?.showResults).toBe(false)
+      expect(state.statusMessage).toBeNull()
+    })
+
+    it('leaves other action keys inert with a statusline reason while a run is active', () => {
+      const running = reduce(selected(['/a', '/b'], ['/a']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      const state = reduce(running, { type: 'action-key', operation: 'install' })
+      expect(state.run).toBe(running.run)
+      expect(state.statusMessage).toBe('a bulk operation is already running')
+    })
+
+    it('does not start a run for install yet, since no runner is wired to it', () => {
+      const state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'install' })
+      expect(state.run).toBeNull()
+      expect(state.statusMessage).toBeNull()
+    })
+
+    it('marks a repo running when its work starts', () => {
+      let state = reduce(selected(['/a', '/b'], ['/a', '/b']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      state = reduce(state, { type: 'repo-run-started', path: '/b' })
+      expect(state.run?.outcomes.get('/b')?.status).toBe('running')
+      expect(state.run?.outcomes.get('/a')?.status).toBe('pending')
+    })
+
+    it('records a successful outcome and does not show results until every repo settles', () => {
+      let state = reduce(selected(['/a', '/b'], ['/a', '/b']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'ok', error: null })
+      expect(state.run?.showResults).toBe(false)
+    })
+
+    it('records a failed outcome with its error line', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/a',
+        status: 'failed',
+        error: 'fatal: Not possible to fast-forward, aborting.',
+      })
+      expect(state.run?.outcomes.get('/a')).toEqual({
+        status: 'failed',
+        error: 'fatal: Not possible to fast-forward, aborting.',
+      })
+    })
+
+    it('shows the results overlay once every repo in the run has settled', () => {
+      let state = reduce(selected(['/a', '/b'], ['/a', '/b']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      expect(state.run?.showResults).toBe(false)
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/b',
+        status: 'failed',
+        error: 'boom',
+      })
+      expect(state.run?.showResults).toBe(true)
+    })
+
+    it('tells the user to dismiss the results overlay before starting another run', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      const finished = state
+      state = reduce(state, { type: 'action-key', operation: 'pull' })
+      expect(state.run).toBe(finished.run)
+      expect(state.statusMessage).toBe('dismiss the results overlay first: press esc')
+    })
+
+    it('dismisses the results overlay, clearing the run', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      state = reduce(state, { type: 'dismiss-results' })
+      expect(state.run).toBeNull()
+      expect(state.statusMessage).toBeNull()
+    })
+
+    it('does nothing on dismiss-results while a run is still active', () => {
+      const running = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      const state = reduce(running, { type: 'dismiss-results' })
+      expect(state).toBe(running)
+    })
+
+    it('does nothing on dismiss-results when there is no run', () => {
+      const idle = loaded(['/a'])
+      expect(reduce(idle, { type: 'dismiss-results' })).toBe(idle)
+    })
+
+    it('ignores repo-run-started/finished for a path outside the active run', () => {
+      const state = reduce(selected(['/a', '/b'], ['/a']), {
+        type: 'action-key',
+        operation: 'pull',
+      })
+      const started = reduce(state, { type: 'repo-run-started', path: '/b' })
+      expect(started).toBe(state)
+      const finished = reduce(state, { type: 'repo-run-finished', path: '/b', status: 'ok' })
+      expect(finished).toBe(state)
+    })
+
+    it('ignores repo-run-started/finished when there is no active run', () => {
+      const idle = loaded(['/a'])
+      expect(reduce(idle, { type: 'repo-run-started', path: '/a' })).toBe(idle)
+      expect(reduce(idle, { type: 'repo-run-finished', path: '/a', status: 'ok' })).toBe(idle)
+    })
+  })
 })

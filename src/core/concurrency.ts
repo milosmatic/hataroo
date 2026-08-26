@@ -1,4 +1,6 @@
 export interface MapWithConcurrencyOptions<T, R> {
+  /** Called right before `fn` starts for an item. */
+  onStart?: (item: T, index: number) => void
   /** Called with each item's result as soon as it resolves, before the whole batch finishes. */
   onEach?: (result: R, item: T, index: number) => void
 }
@@ -24,6 +26,7 @@ export async function mapWithConcurrency<T, R>(
     while (next < items.length) {
       const index = next++
       const item = items[index] as T
+      options.onStart?.(item, index)
       const result = await fn(item, index)
       results[index] = result
       options.onEach?.(result, item, index)

@@ -57,6 +57,18 @@ describe('mapWithConcurrency', () => {
     expect(seen.toSorted()).toEqual([1, 2, 3])
   })
 
+  it('calls onStart right before an item begins, ahead of onEach', async () => {
+    const items = [1, 2]
+    const events: string[] = []
+
+    await mapWithConcurrency(items, 1, async (i) => i, {
+      onStart: (item) => events.push(`start:${item}`),
+      onEach: (result) => events.push(`end:${result}`),
+    })
+
+    expect(events).toEqual(['start:1', 'end:1', 'start:2', 'end:2'])
+  })
+
   it('rejects a non-positive limit instead of silently returning uninitialized results', async () => {
     await expect(mapWithConcurrency([1, 2, 3], 0, async (i) => i)).rejects.toThrow(/limit/)
     await expect(mapWithConcurrency([1, 2, 3], -1, async (i) => i)).rejects.toThrow(/limit/)
