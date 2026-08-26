@@ -3,6 +3,7 @@ export type OutcomeStatus = 'pending' | 'running' | 'ok' | 'failed' | 'skipped'
 export interface RepoOutcome {
   status: OutcomeStatus
   error: string | null
+  output: string
 }
 
 export interface BulkRun {
@@ -18,6 +19,8 @@ export interface CoreState {
   selected: ReadonlySet<string>
   statusMessage: string | null
   run: BulkRun | null
+  lastOperation: ReadonlyMap<string, RepoOutcome>
+  inspecting: string | null
 }
 
 export const EMPTY_SELECTION_MESSAGE = 'nothing selected: press space or a to select repos first'
@@ -32,8 +35,17 @@ export type CoreAction =
   | { type: 'toggle-select-all' }
   | { type: 'action-key'; operation: 'pull' | 'install' }
   | { type: 'repo-run-started'; path: string }
-  | { type: 'repo-run-finished'; path: string; status: 'ok' | 'failed' | 'skipped'; error?: string }
+  | {
+      type: 'repo-run-finished'
+      path: string
+      status: 'ok' | 'failed' | 'skipped'
+      error?: string
+      output?: string
+    }
   | { type: 'dismiss-results' }
+  | { type: 'cancel-run' }
+  | { type: 'open-inspect'; path: string }
+  | { type: 'close-inspect' }
 
 export const initialState: CoreState = {
   repoPaths: [],
@@ -41,6 +53,8 @@ export const initialState: CoreState = {
   selected: new Set(),
   statusMessage: null,
   run: null,
+  lastOperation: new Map(),
+  inspecting: null,
 }
 
 const SETTLED: ReadonlySet<OutcomeStatus> = new Set(['ok', 'failed', 'skipped'])
@@ -53,7 +67,8 @@ function isRunSettled(outcomes: ReadonlyMap<string, RepoOutcome>): boolean {
 }
 
 function withOutcome(run: BulkRun, path: string, outcome: RepoOutcome): BulkRun | null {
-  if (!run.outcomes.has(path)) return null
+  const current = run.outcomes.get(path)
+  if (current === undefined || SETTLED.has(current.status)) return null
   const outcomes = new Map(run.outcomes)
   outcomes.set(path, outcome)
   return { ...run, outcomes, showResults: run.showResults || isRunSettled(outcomes) }
@@ -102,7 +117,7 @@ export function reduce(state: CoreState, action: CoreAction): CoreState {
       if (action.operation !== 'pull') return { ...state, statusMessage: null }
       const paths = state.repoPaths.filter((path) => state.selected.has(path))
       const outcomes = new Map(
-        paths.map((path) => [path, { status: 'pending', error: null } as RepoOutcome]),
+        paths.map((path) => [path, { status: 'pending', error: null, output: '' } as RepoOutcome]),
       )
       return {
         ...state,
@@ -112,22 +127,46 @@ export function reduce(state: CoreState, action: CoreAction): CoreState {
     }
     case 'repo-run-started': {
       if (state.run === null) return state
-      const run = withOutcome(state.run, action.path, { status: 'running', error: null })
+      const run = withOutcome(state.run, action.path, {
+        status: 'running',
+        error: null,
+        output: '',
+      })
       if (run === null) return state
       return { ...state, run }
     }
     case 'repo-run-finished': {
       if (state.run === null) return state
-      const run = withOutcome(state.run, action.path, {
+      const outcome: RepoOutcome = {
         status: action.status,
         error: action.status === 'failed' ? (action.error ?? null) : null,
-      })
+        output: action.output ?? '',
+      }
+      const run = withOutcome(state.run, action.path, outcome)
       if (run === null) return state
-      return { ...state, run }
+      const lastOperation = new Map(state.lastOperation)
+      lastOperation.set(action.path, outcome)
+      return { ...state, run, lastOperation }
     }
     case 'dismiss-results': {
       if (state.run === null || !state.run.showResults) return state
       return { ...state, run: null, statusMessage: null }
+    }
+    case 'cancel-run': {
+      if (state.run === null || state.run.showResults) return state
+      const outcomes = new Map(state.run.outcomes)
+      for (const [path, outcome] of outcomes) {
+        if (outcome.status === 'pending') outcomes.set(path, { ...outcome, status: 'skipped' })
+      }
+      return { ...state, run: { ...state.run, outcomes, showResults: true }, statusMessage: null }
+    }
+    case 'open-inspect': {
+      if (!state.lastOperation.has(action.path)) return state
+      return { ...state, inspecting: action.path }
+    }
+    case 'close-inspect': {
+      if (state.inspecting === null) return state
+      return { ...state, inspecting: null }
     }
     default: {
       action satisfies never

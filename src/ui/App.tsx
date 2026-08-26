@@ -1,8 +1,14 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import type { GitStatus } from '@/core/git-status.js'
-import { pullRepos } from '@/core/pull.js'
-import { type BulkRun, initialState, type OutcomeStatus, reduce } from '@/core/reducer.js'
+import { type PullOutcome, pullRepos } from '@/core/pull.js'
+import {
+  type BulkRun,
+  initialState,
+  type OutcomeStatus,
+  reduce,
+  type RepoOutcome,
+} from '@/core/reducer.js'
 import { clampDepth, scan, type Repo } from '@/core/scan.js'
 import { resolveStatuses } from '@/core/status.js'
 import { viewportStart } from '@/core/viewport.js'
@@ -15,6 +21,13 @@ interface Props {
 }
 
 const CHROME_LINES = 3
+
+// A canceled pull is grouped with skipped, never failed: hataroo killed it on purpose,
+// the git operation itself didn't fail.
+function toOutcomeStatus(outcome: PullOutcome): 'ok' | 'failed' | 'skipped' {
+  if (outcome.ok) return 'ok'
+  return outcome.canceled ? 'skipped' : 'failed'
+}
 
 export function App({ root, depth, ignore }: Props) {
   const { exit } = useApp()
@@ -53,36 +66,60 @@ export function App({ root, depth, ignore }: Props) {
   // `run.paths` is a stable reference for the run's lifetime, so it's a safe key for
   // "have we already started this run" even though `state.run` itself changes each outcome.
   const startedRun = useRef<string[] | null>(null)
+  const runController = useRef<AbortController | null>(null)
   useEffect(() => {
     const run = state.run
     if (run === null || run.operation !== 'pull' || startedRun.current === run.paths) return
     startedRun.current = run.paths
+    const controller = new AbortController()
+    runController.current = controller
     pullRepos(run.paths, {
+      signal: controller.signal,
       onStart: (path) => dispatch({ type: 'repo-run-started', path }),
       onEach: (path, outcome) =>
         dispatch({
           type: 'repo-run-finished',
           path,
-          status: outcome.ok ? 'ok' : 'failed',
+          status: toOutcomeStatus(outcome),
           error: outcome.error ?? undefined,
+          output: outcome.output,
         }),
     }).catch(() => {
       // pullRepo reports failures via the outcome; it shouldn't reject.
     })
   }, [state.run])
 
+  function cancelRun(): void {
+    runController.current?.abort()
+    dispatch({ type: 'cancel-run' })
+  }
+
   const { isRawModeSupported } = useStdin()
   useInput(
     (input, key) => {
-      if (input === 'q') exit()
+      const runActive = state.run !== null && !state.run.showResults
+      if (input === 'q') {
+        if (runActive) cancelRun()
+        exit()
+        return
+      }
+      if (key.escape) {
+        if (state.inspecting !== null) dispatch({ type: 'close-inspect' })
+        else if (runActive) cancelRun()
+        else dispatch({ type: 'dismiss-results' })
+        return
+      }
       if (input === 'r') setScanCount((count) => count + 1)
-      if (key.escape) dispatch({ type: 'dismiss-results' })
       if (key.upArrow) dispatch({ type: 'cursor-up' })
       if (key.downArrow) dispatch({ type: 'cursor-down' })
       if (input === ' ') dispatch({ type: 'toggle-select' })
       if (input === 'a') dispatch({ type: 'toggle-select-all' })
       if (input === 'p') dispatch({ type: 'action-key', operation: 'pull' })
       if (input === 'i') dispatch({ type: 'action-key', operation: 'install' })
+      if (key.return && state.inspecting === null) {
+        const path = state.repoPaths[state.cursor]
+        if (path !== undefined) dispatch({ type: 'open-inspect', path })
+      }
     },
     { isActive: isRawModeSupported === true },
   )
@@ -132,8 +169,18 @@ export function App({ root, depth, ignore }: Props) {
     )
   }
 
+  if (state.inspecting !== null) {
+    const repo = repos.find((r) => r.path === state.inspecting)
+    const outcome = state.lastOperation.get(state.inspecting)
+    if (outcome !== undefined) {
+      return <InspectView name={repo?.name ?? state.inspecting} outcome={outcome} />
+    }
+  }
+
   if (state.run !== null && state.run.showResults) {
-    return <ResultsOverlay run={state.run} repos={repos} />
+    return (
+      <ResultsOverlay run={state.run} repos={repos} cursorPath={state.repoPaths[state.cursor]} />
+    )
   }
 
   const visible = repos.slice(start, start + height)
@@ -150,9 +197,12 @@ export function App({ root, depth, ignore }: Props) {
         />
       ))}
       <Box marginTop={1} flexDirection="column">
+        {state.run !== null && !state.run.showResults && (
+          <Text color="cyan">{state.run.operation} running… esc to cancel</Text>
+        )}
         {state.statusMessage !== null && <Text color="yellow">{state.statusMessage}</Text>}
         <Text dimColor>
-          ↑↓ move · space select · a all · p pull · i install · r rescan · q quit
+          ↑↓ move · space select · a all · enter inspect · p pull · i install · r rescan · q quit
         </Text>
       </Box>
     </Box>
@@ -162,6 +212,7 @@ export function App({ root, depth, ignore }: Props) {
 interface ResultsOverlayProps {
   run: BulkRun
   repos: Repo[]
+  cursorPath: string | undefined
 }
 
 interface OutcomePresentation {
@@ -181,7 +232,7 @@ function countByStatus(run: BulkRun, status: OutcomeStatus): number {
   return run.paths.filter((path) => run.outcomes.get(path)?.status === status).length
 }
 
-function ResultsOverlay({ run, repos }: ResultsOverlayProps) {
+function ResultsOverlay({ run, repos, cursorPath }: ResultsOverlayProps) {
   const nameFor = (path: string) => repos.find((repo) => repo.path === path)?.name ?? path
   const ok = countByStatus(run, 'ok')
   const failed = countByStatus(run, 'failed')
@@ -197,14 +248,33 @@ function ResultsOverlay({ run, repos }: ResultsOverlayProps) {
         const status = outcome?.status ?? 'pending'
         const { icon, color } = OUTCOME_PRESENTATION[status]
         return (
-          <Text key={path} color={color}>
+          <Text key={path} color={color} inverse={path === cursorPath}>
             {icon} {nameFor(path)}
             {status === 'failed' && outcome?.error !== null ? `: ${outcome?.error}` : ''}
           </Text>
         )
       })}
       <Box marginTop={1}>
-        <Text dimColor>esc dismiss</Text>
+        <Text dimColor>↑↓ move · enter inspect · esc dismiss</Text>
+      </Box>
+    </Box>
+  )
+}
+
+interface InspectViewProps {
+  name: string
+  outcome: RepoOutcome
+}
+
+function InspectView({ name, outcome }: InspectViewProps) {
+  return (
+    <Box flexDirection="column">
+      <Text bold>
+        {name}: {outcome.status}
+      </Text>
+      <Text>{outcome.output === '' ? '(no output)' : outcome.output}</Text>
+      <Box marginTop={1}>
+        <Text dimColor>esc close</Text>
       </Box>
     </Box>
   )

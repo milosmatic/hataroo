@@ -3,6 +3,14 @@ import { type CoreState, initialState, reduce } from './reducer.js'
 
 const loaded = (paths: string[]): CoreState => reduce(initialState, { type: 'repos-loaded', paths })
 
+function selected(paths: string[], picks: string[]): CoreState {
+  let state = loaded(paths)
+  for (const pick of picks) {
+    state = reduce({ ...state, cursor: paths.indexOf(pick) }, { type: 'toggle-select' })
+  }
+  return state
+}
+
 describe('reduce', () => {
   describe('repos-loaded', () => {
     it('starts with the cursor on the first row and nothing selected', () => {
@@ -136,14 +144,6 @@ describe('reduce', () => {
   })
 
   describe('bulk operation lifecycle', () => {
-    function selected(paths: string[], picks: string[]): CoreState {
-      let state = loaded(paths)
-      for (const pick of picks) {
-        state = reduce({ ...state, cursor: paths.indexOf(pick) }, { type: 'toggle-select' })
-      }
-      return state
-    }
-
     it('starts a run over the selection, queued in row order, all pending', () => {
       const state = reduce(selected(['/a', '/b', '/c'], ['/c', '/a']), {
         type: 'action-key',
@@ -151,8 +151,8 @@ describe('reduce', () => {
       })
       expect(state.run?.operation).toBe('pull')
       expect(state.run?.paths).toEqual(['/a', '/c'])
-      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'pending', error: null })
-      expect(state.run?.outcomes.get('/c')).toEqual({ status: 'pending', error: null })
+      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'pending', error: null, output: '' })
+      expect(state.run?.outcomes.get('/c')).toEqual({ status: 'pending', error: null, output: '' })
       expect(state.run?.showResults).toBe(false)
       expect(state.statusMessage).toBeNull()
     })
@@ -189,21 +189,25 @@ describe('reduce', () => {
         operation: 'pull',
       })
       state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
-      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'ok', error: null })
+      expect(state.run?.outcomes.get('/a')).toEqual({ status: 'ok', error: null, output: '' })
       expect(state.run?.showResults).toBe(false)
     })
 
-    it('records a failed outcome with its error line', () => {
+    it('records a failed outcome with its error line and full output', () => {
       let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
       state = reduce(state, {
         type: 'repo-run-finished',
         path: '/a',
         status: 'failed',
         error: 'fatal: Not possible to fast-forward, aborting.',
+        output:
+          'From origin\n   abc..def  main -> origin/main\nfatal: Not possible to fast-forward, aborting.',
       })
       expect(state.run?.outcomes.get('/a')).toEqual({
         status: 'failed',
         error: 'fatal: Not possible to fast-forward, aborting.',
+        output:
+          'From origin\n   abc..def  main -> origin/main\nfatal: Not possible to fast-forward, aborting.',
       })
     })
 
@@ -266,6 +270,131 @@ describe('reduce', () => {
       const idle = loaded(['/a'])
       expect(reduce(idle, { type: 'repo-run-started', path: '/a' })).toBe(idle)
       expect(reduce(idle, { type: 'repo-run-finished', path: '/a', status: 'ok' })).toBe(idle)
+    })
+
+    it('ignores a late repo-run-finished for a path cancellation already settled', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, { type: 'cancel-run' })
+      const cancelled = state
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      expect(state.run).toBe(cancelled.run)
+    })
+  })
+
+  describe('cancel-run', () => {
+    function runningState(): CoreState {
+      let state = loaded(['/a', '/b', '/c'])
+      state = reduce({ ...state, cursor: 0 }, { type: 'toggle-select' })
+      state = reduce({ ...state, cursor: 1 }, { type: 'toggle-select' })
+      state = reduce({ ...state, cursor: 2 }, { type: 'toggle-select' })
+      state = reduce(state, { type: 'action-key', operation: 'pull' })
+      state = reduce(state, { type: 'repo-run-started', path: '/a' })
+      state = reduce(state, { type: 'repo-run-finished', path: '/b', status: 'ok' })
+      // /a is running, /b is finished (ok), /c is still pending
+      return state
+    }
+
+    it('keeps a finished outcome as-is', () => {
+      const state = reduce(runningState(), { type: 'cancel-run' })
+      expect(state.run?.outcomes.get('/b')).toEqual({ status: 'ok', error: null, output: '' })
+    })
+
+    it('leaves a running outcome running, for the real SIGTERM to resolve later', () => {
+      const state = reduce(runningState(), { type: 'cancel-run' })
+      expect(state.run?.outcomes.get('/a')?.status).toBe('running')
+    })
+
+    it('marks a pending outcome skipped', () => {
+      const state = reduce(runningState(), { type: 'cancel-run' })
+      expect(state.run?.outcomes.get('/c')?.status).toBe('skipped')
+    })
+
+    it('shows the results overlay immediately, even with a repo still running', () => {
+      const state = reduce(runningState(), { type: 'cancel-run' })
+      expect(state.run?.showResults).toBe(true)
+    })
+
+    it('still applies the SIGTERMed outcome once it actually settles', () => {
+      let state = reduce(runningState(), { type: 'cancel-run' })
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/a',
+        status: 'skipped',
+        output: 'Terminated',
+      })
+      expect(state.run?.outcomes.get('/a')).toEqual({
+        status: 'skipped',
+        error: null,
+        output: 'Terminated',
+      })
+    })
+
+    it('does nothing when there is no active run', () => {
+      const idle = loaded(['/a'])
+      expect(reduce(idle, { type: 'cancel-run' })).toBe(idle)
+    })
+
+    it('does nothing once results are already showing', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, { type: 'repo-run-finished', path: '/a', status: 'ok' })
+      const finished = state
+      state = reduce(state, { type: 'cancel-run' })
+      expect(state).toBe(finished)
+    })
+  })
+
+  describe('inspect view', () => {
+    it('opens the inspect view for a repo with a recorded last operation', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/a',
+        status: 'ok',
+        output: 'up to date',
+      })
+      state = reduce(state, { type: 'open-inspect', path: '/a' })
+      expect(state.inspecting).toBe('/a')
+    })
+
+    it('does nothing for a repo with no recorded operation', () => {
+      const state = loaded(['/a'])
+      expect(reduce(state, { type: 'open-inspect', path: '/a' })).toBe(state)
+    })
+
+    it('closes the inspect view', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/a',
+        status: 'ok',
+        output: 'up to date',
+      })
+      state = reduce(state, { type: 'open-inspect', path: '/a' })
+      state = reduce(state, { type: 'close-inspect' })
+      expect(state.inspecting).toBeNull()
+    })
+
+    it('does nothing closing an already-closed inspect view', () => {
+      const state = loaded(['/a'])
+      expect(reduce(state, { type: 'close-inspect' })).toBe(state)
+    })
+
+    it('records the last operation and keeps it after the results overlay is dismissed', () => {
+      let state = reduce(selected(['/a'], ['/a']), { type: 'action-key', operation: 'pull' })
+      state = reduce(state, {
+        type: 'repo-run-finished',
+        path: '/a',
+        status: 'failed',
+        error: 'boom',
+        output: 'full log line 1\nfull log line 2',
+      })
+      state = reduce(state, { type: 'dismiss-results' })
+      expect(state.lastOperation.get('/a')).toEqual({
+        status: 'failed',
+        error: 'boom',
+        output: 'full log line 1\nfull log line 2',
+      })
+      expect(state.run).toBeNull()
     })
   })
 })
