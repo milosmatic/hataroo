@@ -1,6 +1,7 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import type { GitStatus } from '@/core/git-status.js'
+import { type Installable, resolveInstallables } from '@/core/package-manager.js'
 import { type PullOutcome, pullRepos } from '@/core/pull.js'
 import {
   type BulkRun,
@@ -33,6 +34,7 @@ export function App({ root, depth, ignore }: Props) {
   const { exit } = useApp()
   const [repos, setRepos] = useState<Repo[] | null>(null)
   const [statuses, setStatuses] = useState<Map<string, GitStatus>>(new Map())
+  const [installables, setInstallables] = useState<Map<string, Installable>>(new Map())
   const [error, setError] = useState<string | null>(null)
   const [scanCount, setScanCount] = useState(0)
   const [state, dispatch] = useReducer(reduce, initialState)
@@ -46,14 +48,19 @@ export function App({ root, depth, ignore }: Props) {
         if (cancelled) return
         setRepos(found)
         setStatuses(new Map())
-        dispatch({ type: 'repos-loaded', paths: found.map((repo) => repo.path) })
-        return resolveStatuses(
-          found.map((repo) => repo.path),
-          (path, status) => {
+        setInstallables(new Map())
+        const paths = found.map((repo) => repo.path)
+        dispatch({ type: 'repos-loaded', paths })
+        return Promise.all([
+          resolveStatuses(paths, (path, status) => {
             if (cancelled) return
             setStatuses((prev) => new Map(prev).set(path, status))
-          },
-        )
+          }),
+          resolveInstallables(paths, (path, installable) => {
+            if (cancelled) return
+            setInstallables((prev) => new Map(prev).set(path, installable))
+          }),
+        ])
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
@@ -192,6 +199,7 @@ export function App({ root, depth, ignore }: Props) {
           key={repo.path}
           repo={repo}
           status={statuses.get(repo.path)}
+          installable={installables.get(repo.path)}
           isCursor={start + i === state.cursor}
           isSelected={state.selected.has(repo.path)}
         />
@@ -283,11 +291,18 @@ function InspectView({ name, outcome }: InspectViewProps) {
 interface RepoRowProps {
   repo: Repo
   status: GitStatus | undefined
+  installable: Installable | undefined
   isCursor: boolean
   isSelected: boolean
 }
 
-function RepoRow({ repo, status, isCursor, isSelected }: RepoRowProps) {
+function PackageManagerHint({ installable }: { installable: Installable | undefined }) {
+  if (installable === undefined) return null
+  if (!installable.installable) return <Text dimColor> · no install</Text>
+  return <Text> · {installable.packageManager}</Text>
+}
+
+function RepoRow({ repo, status, installable, isCursor, isSelected }: RepoRowProps) {
   const prefix = `${isCursor ? '›' : ' '}${isSelected ? '◉' : '○'} `
 
   if (status === undefined) {
@@ -295,6 +310,7 @@ function RepoRow({ repo, status, isCursor, isSelected }: RepoRowProps) {
       <Text color={isSelected ? 'cyan' : undefined} inverse={isCursor}>
         {prefix}
         <Spinner /> {repo.name}
+        <PackageManagerHint installable={installable} />
       </Text>
     )
   }
@@ -304,6 +320,7 @@ function RepoRow({ repo, status, isCursor, isSelected }: RepoRowProps) {
       {prefix}
       {repo.name} · {status.branch} · ↑{status.ahead}↓{status.behind}{' '}
       {status.dirty ? <Text color="yellow">● dirty</Text> : <Text dimColor>clean</Text>}
+      <PackageManagerHint installable={installable} />
     </Text>
   )
 }
