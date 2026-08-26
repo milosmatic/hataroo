@@ -3,6 +3,8 @@ export interface MapWithConcurrencyOptions<T, R> {
   onStart?: (item: T, index: number) => void
   /** Called with each item's result as soon as it resolves, before the whole batch finishes. */
   onEach?: (result: R, item: T, index: number) => void
+  /** Once aborted, no new items are started. Items already in flight run to completion. */
+  signal?: AbortSignal
 }
 
 /**
@@ -24,6 +26,7 @@ export async function mapWithConcurrency<T, R>(
 
   async function worker(): Promise<void> {
     while (next < items.length) {
+      if (options.signal?.aborted === true) return
       const index = next++
       const item = items[index] as T
       options.onStart?.(item, index)

@@ -69,6 +69,26 @@ describe('mapWithConcurrency', () => {
     expect(events).toEqual(['start:1', 'end:1', 'start:2', 'end:2'])
   })
 
+  it('stops starting new items once the signal aborts, but lets in-flight ones finish', async () => {
+    const items = [1, 2, 3, 4]
+    const controller = new AbortController()
+    const started: number[] = []
+
+    await mapWithConcurrency(
+      items,
+      1,
+      async (i) => {
+        started.push(i)
+        if (i === 2) controller.abort()
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return i
+      },
+      { signal: controller.signal },
+    )
+
+    expect(started).toEqual([1, 2])
+  })
+
   it('rejects a non-positive limit instead of silently returning uninitialized results', async () => {
     await expect(mapWithConcurrency([1, 2, 3], 0, async (i) => i)).rejects.toThrow(/limit/)
     await expect(mapWithConcurrency([1, 2, 3], -1, async (i) => i)).rejects.toThrow(/limit/)

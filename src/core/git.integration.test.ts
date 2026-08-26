@@ -131,7 +131,9 @@ describe('pullRepo (git integration)', () => {
 
     const outcome = await pullRepo(clone)
 
-    expect(outcome).toEqual({ ok: true, error: null })
+    expect(outcome.ok).toBe(true)
+    expect(outcome.canceled).toBe(false)
+    expect(outcome.error).toBeNull()
     const log = await execa('git', ['log', '-1', '--format=%s'], { cwd: clone })
     expect(log.stdout).toBe('ahead by one')
   })
@@ -145,6 +147,7 @@ describe('pullRepo (git integration)', () => {
     const outcome = await pullRepo(clone)
 
     expect(outcome.ok).toBe(false)
+    expect(outcome.canceled).toBe(false)
     expect(outcome.error).toMatch(/fast-forward/i)
     const log = await execa('git', ['log', '-1', '--format=%s'], { cwd: clone })
     expect(log.stdout).toBe('local diverges')
@@ -158,10 +161,25 @@ describe('pullRepo (git integration)', () => {
 
     const outcome = await pullRepo(clone)
 
-    expect(outcome).toEqual({ ok: true, error: null })
+    expect(outcome.ok).toBe(true)
+    expect(outcome.canceled).toBe(false)
+    expect(outcome.error).toBeNull()
     const log = await execa('git', ['log', '-1', '--format=%s'], { cwd: clone })
     expect(log.stdout).toBe('ahead by one')
     expect(await readFile(join(clone, 'local.txt'), 'utf8')).toBe('local change')
+  })
+
+  it('reports the pull as canceled when its signal aborts', async () => {
+    const { origin, clone } = await makeRemoteAndClone()
+    await commit(origin, 'ahead by one')
+    await execa('git', ['push', '-q', 'origin', 'main'], { cwd: origin })
+    const controller = new AbortController()
+    controller.abort()
+
+    const outcome = await pullRepo(clone, { signal: controller.signal })
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.canceled).toBe(true)
   })
 
   it('fails when the autostash pop conflicts, leaving the stash preserved', async () => {
